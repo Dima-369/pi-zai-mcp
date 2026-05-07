@@ -1,6 +1,18 @@
 # pi-zai-mcp
 
-Project-local pi extension that exposes the Z.ai MCP server tools to pi.
+Project-local pi extension that exposes Z.ai MCP server tools to pi. Use it when you want agents to search the web, read URLs, inspect Zread documents/repos, or call Z.ai vision tools from inside a pi session.
+
+## Quick start
+
+```bash
+npm install
+export Z_AI_API_KEY="your_z_ai_api_key"
+pi -e .
+```
+
+Then ask pi to use the `z_ai_*` tools, or run `/zai-mcp-status` to inspect configured server connections.
+
+## Z.ai MCP servers
 
 It bridges these Z.ai MCP servers:
 

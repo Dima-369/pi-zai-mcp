@@ -12,9 +12,9 @@
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
-    "@mariozechner/pi-ai": "^0.72.0",
-    "@mariozechner/pi-coding-agent": "^0.72.0",
-    "typebox": "^1.1.37",
+    "@earendil-works/pi-ai": "^0.74.0",
+    "@earendil-works/pi-coding-agent": "^0.74.0",
+    "typebox": "^1.1.38",
     "typescript": "^6.0.3"
   },
   "pi": {
@@ -23,8 +23,8 @@
     ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-ai": "*",
-    "@mariozechner/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"
   }
 }
