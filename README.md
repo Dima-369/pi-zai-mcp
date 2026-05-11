@@ -1,87 +1,155 @@
 # pi-zai-mcp
 
-Project-local pi extension that exposes Z.ai MCP server tools to pi. Use it when you want agents to search the web, read URLs, inspect Zread documents/repos, or call Z.ai vision tools from inside a pi session.
+Give pi agents Z.ai-powered web search, URL reading, repository reading, and vision tools through MCP without leaving a pi session. This is an unofficial community package, not an official Z.ai package.
 
-## Quick start
+## What you get
+
+`pi-zai-mcp` registers pi tools that bridge Z.ai MCP servers:
+
+- **Search the web** with Z.ai Web Search MCP.
+- **Read URLs** and convert pages to model-friendly Markdown/text with Z.ai Web Reader MCP.
+- **Inspect GitHub repositories** through Zread search, file reading, and directory-structure tools.
+- **Analyze images and videos** through Z.ai vision tools for UI screenshots, OCR, error screenshots, diagrams, charts, image understanding, and video understanding.
+
+Generic MCP tools are available immediately. Server-specific `z_ai_*` wrapper tools are registered after tool discovery, either by calling `z_ai_mcp_list_tools` or by setting `Z_AI_MCP_AUTO_DISCOVER=1`.
+
+## Proof from a real discovery run
+
+A live `z_ai_mcp_list_tools` run on 2026-05-11 reported these Z.ai MCP tools:
+
+```text
+search: web_search_prime
+reader: webReader
+zread: search_doc, read_file, get_repo_structure
+vision: ui_to_artifact, extract_text_from_screenshot, diagnose_error_screenshot,
+        understand_technical_diagram, analyze_data_visualization, ui_diff_check,
+        analyze_image, analyze_video
+```
+
+The extension turns discovered tools into pi tool names with this pattern:
+
+```text
+z_ai_<server>_<mcp_tool_name>
+```
+
+Examples:
+
+```text
+z_ai_search_web_search_prime
+z_ai_reader_webReader
+z_ai_zread_search_doc
+z_ai_zread_get_repo_structure
+z_ai_zread_read_file
+z_ai_vision_extract_text_from_screenshot
+```
+
+## Install
+
+Install from npm:
 
 ```bash
+pi install npm:pi-zai-mcp
+```
+
+Install from GitHub:
+
+```bash
+pi install https://github.com/fitchmultz/pi-zai-mcp
+```
+
+Try it without installing permanently:
+
+```bash
+export Z_AI_API_KEY="your_z_ai_api_key"
+pi -e npm:pi-zai-mcp
+```
+
+Run from a local clone:
+
+```bash
+git clone https://github.com/fitchmultz/pi-zai-mcp.git
+cd pi-zai-mcp
 npm install
 export Z_AI_API_KEY="your_z_ai_api_key"
 pi -e .
 ```
 
-Then ask pi to use the `z_ai_*` tools, or run `/zai-mcp-status` to inspect configured server connections.
+## Configure
 
-## Z.ai MCP servers
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `Z_AI_API_KEY` / `ZAI_API_KEY` | Yes | none | Z.ai API key used for HTTP MCP Bearer auth and the vision stdio server. |
+| `Z_AI_MCP_SERVERS` | No | `all` | Comma-separated subset of `search,reader,zread,vision`. |
+| `Z_AI_MCP_AUTO_DISCOVER` | No | off | Set to `1`, `true`, `yes`, or `on` to discover and register server-specific wrappers at extension startup. |
+| `Z_AI_MCP_TIMEOUT_MS` | No | `30000` | Per-connection/tool-call timeout in milliseconds. |
+| `Z_AI_MODE` | No | `ZAI` | Passed through to the vision MCP server. |
 
-It bridges these Z.ai MCP servers:
-
-- Web Search MCP: `https://api.z.ai/api/mcp/web_search_prime/mcp`
-- Web Reader MCP: `https://api.z.ai/api/mcp/web_reader/mcp`
-- Zread MCP: `https://api.z.ai/api/mcp/zread/mcp`
-- Vision MCP: local stdio server via `npx -y @z_ai/mcp-server@latest`
-
-## Setup
-
-```bash
-npm install
-export Z_AI_API_KEY="your_z_ai_api_key"
-# optional alias also supported: ZAI_API_KEY
-```
-
-The extension is auto-discoverable from:
-
-```text
-.pi/extensions/zai-mcp.ts
-```
-
-Run pi from this project directory, or install this package as a pi package later.
-
-## Configuration
-
-Optional environment variables:
-
-- `Z_AI_API_KEY` / `ZAI_API_KEY`: required Z.ai API key.
-- `Z_AI_MODE`: passed to the vision MCP server, defaults to `ZAI`.
-- `Z_AI_MCP_SERVERS`: comma-separated subset of `search,reader,zread,vision`; defaults to all.
-
-Example without vision startup:
+Example: disable vision server access for a lighter setup.
 
 ```bash
 export Z_AI_MCP_SERVERS=search,reader,zread
 ```
 
-## Tools
+## Use
 
-On startup, the extension connects to each enabled Z.ai MCP server, lists its tools, and registers pi tools named:
+Built-in generic tools:
 
-```text
-z_ai_<server>_<mcpToolName>
-```
+- `z_ai_mcp_list_tools` — list configured Z.ai MCP tools and schemas; successful discovery also registers server-specific wrappers.
+- `z_ai_mcp_call_tool` — call an exact MCP tool by server id and raw MCP tool name.
 
-Examples include tools like:
+Typical flow:
 
-- `z_ai_search_webSearchPrime`
-- `z_ai_reader_webReader`
-- `z_ai_zread_search_doc`
-- `z_ai_zread_get_repo_structure`
-- `z_ai_zread_read_file`
+1. Ask pi to call `z_ai_mcp_list_tools` for `search`, `reader`, `zread`, or `vision`.
+2. Use a discovered wrapper such as `z_ai_search_web_search_prime`, or call the exact MCP tool through `z_ai_mcp_call_tool`.
+3. Run `/zai-mcp-status` in interactive pi to inspect server connection, discovery, and wrapper registration status.
 
-Vision tools are discovered from `@z_ai/mcp-server@latest`.
+Large MCP outputs are truncated to pi's standard 50 KB / 2000 line limit. When truncation happens, the full output is saved to a temp file and the path is included in the tool result.
 
-Fallback generic tools are always registered:
+## How it works
 
-- `z_ai_mcp_list_tools` — list Z.ai MCP tools and schemas.
-- `z_ai_mcp_call_tool` — call any enabled Z.ai MCP tool by exact server/tool name.
+- `search`, `reader`, and `zread` use Z.ai Streamable HTTP MCP endpoints.
+- `vision` uses the `@z_ai/mcp-server` stdio server. The package depends on `@z_ai/mcp-server@0.1.4` and falls back to `npx -y @z_ai/mcp-server@0.1.4` only if the local binary is unavailable.
+- The extension registers generic tools synchronously so pi startup is fast.
+- Server connections and tool discovery are lazy by default to avoid blocking pi startup on network or package-manager work.
+- `session_shutdown` closes any opened MCP transports.
 
-Command:
+## Security and data flow
 
-- `/zai-mcp-status` — show configured server connection status.
+- Pi extensions run with your local user permissions. Review code before installing any third-party pi package.
+- The extension reads `Z_AI_API_KEY` or `ZAI_API_KEY` from the environment; it does not store credentials.
+- HTTP MCP calls send the key as a Bearer token to Z.ai MCP endpoints.
+- Vision calls start a local stdio MCP server and pass the key in that child process environment.
+- Truncated full outputs are written under your OS temp directory, not this repo.
 
-Large MCP outputs are truncated to pi's standard 50KB / 2000-line limit; full output is saved to a temp file and the path is included in the tool result.
-
-## Validation
+## Verify this repo
 
 ```bash
+npm install
 npm run typecheck
+npm audit --omit=dev
+npm publish --dry-run
+```
+
+For install-path checks, use a temporary project so local `.pi/settings.json` changes do not affect another repo:
+
+```bash
+tmpdir="$(mktemp -d)"
+cd "$tmpdir"
+pi install -l /path/to/pi-zai-mcp
+```
+
+## Current limits
+
+- Requires a Z.ai API key and network access for real tool calls.
+- Server-specific wrapper availability depends on live MCP discovery. Generic list/call tools remain available even when discovery fails.
+- Upstream MCP schemas and tool names can change.
+- Verification currently consists of TypeScript typechecking, npm audit, npm dry-run packing, and pi install smoke checks; there is no dedicated unit test suite yet.
+
+## Project map
+
+```text
+extensions/zai-mcp.ts  # public pi package entrypoint
+src/index.ts           # extension implementation
+package.json           # npm + pi package manifest
+CHANGELOG.md           # release notes
 ```

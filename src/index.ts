@@ -9,12 +9,18 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Type } from "typebox";
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const EXTENSION_NAME = "pi-zai-mcp";
-const DEFAULT_TIMEOUT_MS = 120_000;
+const EXTENSION_VERSION = "0.1.0";
+const VISION_MCP_PACKAGE = "@z_ai/mcp-server";
+const VISION_MCP_VERSION = "0.1.4";
+const VISION_MCP_BIN = "zai-mcp-server";
+const DEFAULT_TIMEOUT_MS = positiveIntegerFromEnv("Z_AI_MCP_TIMEOUT_MS", 30_000);
 
 type ServerKind = "http" | "stdio";
 
@@ -32,6 +38,8 @@ type ManagedServer = ServerConfig & {
   client?: Client;
   transport?: StreamableHTTPClientTransport | StdioClientTransport;
   connectPromise?: Promise<Client>;
+  tools?: McpTool[];
+  toolsPromise?: Promise<McpTool[]>;
   lastError?: string;
 };
 
@@ -61,8 +69,21 @@ const LIST_TOOLS_SCHEMA = Type.Object({
   ),
 });
 
+function positiveIntegerFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : fallback;
+}
+
 function getApiKey(): string | undefined {
   return process.env.Z_AI_API_KEY || process.env.ZAI_API_KEY;
+}
+
+function shouldAutoDiscoverTools(): boolean {
+  const raw = process.env.Z_AI_MCP_AUTO_DISCOVER?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
 function enabledServerIds(): Set<string> | undefined {
@@ -71,14 +92,40 @@ function enabledServerIds(): Set<string> | undefined {
   return new Set(
     raw
       .split(",")
-      .map((part) => part.trim())
+      .map((part) => part.trim().toLowerCase())
       .filter(Boolean),
   );
+}
+
+function environment(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === "string") env[key] = value;
+  }
+  return env;
+}
+
+function resolveVisionServerCommand(): { command: string; args: string[] } {
+  const binName = process.platform === "win32" ? `${VISION_MCP_BIN}.cmd` : VISION_MCP_BIN;
+  const extensionDir = dirname(fileURLToPath(import.meta.url));
+  const localCandidates = [
+    resolve(extensionDir, "..", "node_modules", ".bin", binName),
+    resolve(extensionDir, "..", "..", "node_modules", ".bin", binName),
+  ];
+  const localBin = localCandidates.find((candidate) => existsSync(candidate));
+
+  if (localBin) return { command: localBin, args: [] };
+
+  return {
+    command: "npx",
+    args: ["-y", `${VISION_MCP_PACKAGE}@${VISION_MCP_VERSION}`],
+  };
 }
 
 function createServers(): ManagedServer[] {
   const apiKey = getApiKey();
   const enabled = enabledServerIds();
+  const visionCommand = resolveVisionServerCommand();
 
   const all: ManagedServer[] = [
     {
@@ -103,17 +150,25 @@ function createServers(): ManagedServer[] {
       id: "vision",
       label: "Z.ai Vision",
       kind: "stdio",
-      command: "npx",
-      args: ["-y", "@z_ai/mcp-server@latest"],
+      command: visionCommand.command,
+      args: visionCommand.args,
       env: {
-        ...process.env,
+        ...environment(),
         ...(apiKey ? { Z_AI_API_KEY: apiKey } : {}),
         Z_AI_MODE: process.env.Z_AI_MODE || "ZAI",
-      } as Record<string, string>,
+      },
     },
   ];
 
-  return enabled ? all.filter((server) => enabled.has(server.id)) : all;
+  if (!enabled) return all;
+
+  const known = new Set(all.map((server) => server.id));
+  const unknown = [...enabled].filter((id) => !known.has(id));
+  if (unknown.length > 0) {
+    console.warn(`[${EXTENSION_NAME}] ignoring unknown Z_AI_MCP_SERVERS value(s): ${unknown.join(", ")}`);
+  }
+
+  return all.filter((server) => enabled.has(server.id));
 }
 
 function piToolName(serverId: string, mcpToolName: string): string {
@@ -201,7 +256,7 @@ async function connect(server: ManagedServer): Promise<Client> {
   if (server.connectPromise) return server.connectPromise;
 
   server.connectPromise = (async () => {
-    const client = new Client({ name: EXTENSION_NAME, version: "0.1.0" });
+    const client = new Client({ name: EXTENSION_NAME, version: EXTENSION_VERSION });
 
     if (server.kind === "http") {
       const apiKey = getApiKey();
@@ -244,21 +299,36 @@ async function connect(server: ManagedServer): Promise<Client> {
 }
 
 async function listServerTools(server: ManagedServer): Promise<McpTool[]> {
-  const client = await connect(server);
-  const tools: McpTool[] = [];
-  let cursor: string | undefined;
+  if (server.tools) return server.tools;
+  if (server.toolsPromise) return server.toolsPromise;
 
-  do {
-    const response = await client.listTools(cursor ? { cursor } : undefined, { timeout: DEFAULT_TIMEOUT_MS });
-    tools.push(...response.tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-    })));
-    cursor = response.nextCursor;
-  } while (cursor);
+  server.toolsPromise = (async () => {
+    const client = await connect(server);
+    const tools: McpTool[] = [];
+    let cursor: string | undefined;
 
-  return tools;
+    do {
+      const response = await client.listTools(cursor ? { cursor } : undefined, { timeout: DEFAULT_TIMEOUT_MS });
+      tools.push(...response.tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      })));
+      cursor = response.nextCursor;
+    } while (cursor);
+
+    server.tools = tools;
+    server.lastError = undefined;
+    return tools;
+  })();
+
+  try {
+    return await server.toolsPromise;
+  } catch (error) {
+    server.toolsPromise = undefined;
+    server.lastError = error instanceof Error ? error.message : String(error);
+    throw error;
+  }
 }
 
 async function callMcpTool(
@@ -289,11 +359,36 @@ function findServer(servers: ManagedServer[], id: string): ManagedServer {
   return server;
 }
 
-function registerGenericTools(pi: ExtensionAPI, servers: ManagedServer[]) {
+async function discoverAndRegisterServerTools(
+  pi: ExtensionAPI,
+  server: ManagedServer,
+  registeredToolNames: Set<string>,
+): Promise<McpTool[]> {
+  const tools = await listServerTools(server);
+  registerDiscoveredTools(pi, server, tools, registeredToolNames);
+  return tools;
+}
+
+function registerDiscoveredTools(
+  pi: ExtensionAPI,
+  server: ManagedServer,
+  tools: McpTool[],
+  registeredToolNames: Set<string>,
+) {
+  for (const tool of tools) {
+    const toolName = piToolName(server.id, tool.name);
+    if (registeredToolNames.has(toolName)) continue;
+
+    registerDiscoveredTool(pi, server, tool);
+    registeredToolNames.add(toolName);
+  }
+}
+
+function registerGenericTools(pi: ExtensionAPI, servers: ManagedServer[], registeredToolNames: Set<string>) {
   pi.registerTool({
     name: "z_ai_mcp_list_tools",
     label: "Z.ai MCP List Tools",
-    description: "List tools exposed by the configured Z.ai MCP servers.",
+    description: "List tools exposed by the configured Z.ai MCP servers. Discovered tools are registered as z_ai_* wrappers after a successful list call.",
     promptSnippet: "List available Z.ai MCP tools from search, reader, zread, and vision servers",
     promptGuidelines: [
       "Use z_ai_mcp_list_tools to discover Z.ai MCP tool names and schemas when a specific z_ai_* wrapper is unavailable or failed to register.",
@@ -305,7 +400,7 @@ function registerGenericTools(pi: ExtensionAPI, servers: ManagedServer[]) {
 
       for (const server of targets) {
         try {
-          output[server.id] = await listServerTools(server);
+          output[server.id] = await discoverAndRegisterServerTools(pi, server, registeredToolNames);
         } catch (error) {
           output[server.id] = { error: error instanceof Error ? error.message : String(error) };
         }
@@ -393,44 +488,49 @@ async function closeServers(servers: ManagedServer[]) {
   );
 }
 
-function serverStatus(servers: ManagedServer[]) {
-  return servers.map((server) => ({
-    id: server.id,
-    label: server.label,
-    kind: server.kind,
-    connected: Boolean(server.client),
-    lastError: server.lastError,
-  }));
+function serverStatus(servers: ManagedServer[], registeredToolNames: Set<string>) {
+  return servers.map((server) => {
+    const toolPrefix = `z_ai_${server.id}_`;
+    return {
+      id: server.id,
+      label: server.label,
+      kind: server.kind,
+      connected: Boolean(server.client),
+      toolsDiscovered: server.tools?.length ?? 0,
+      registeredWrappers: [...registeredToolNames].filter((toolName) => toolName.startsWith(toolPrefix)).length,
+      lastError: server.lastError,
+    };
+  });
 }
 
-export default async function zaiMcpExtension(pi: ExtensionAPI) {
+async function discoverAllServerTools(pi: ExtensionAPI, servers: ManagedServer[], registeredToolNames: Set<string>) {
+  await Promise.allSettled(
+    servers.map(async (server) => {
+      try {
+        const tools = await discoverAndRegisterServerTools(pi, server, registeredToolNames);
+        console.warn(`[${EXTENSION_NAME}] registered ${tools.length} tool(s) from ${server.id}.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        server.lastError = message;
+        console.warn(`[${EXTENSION_NAME}] failed to discover ${server.id} tools: ${message}`);
+      }
+    }),
+  );
+}
+
+export default function zaiMcpExtension(pi: ExtensionAPI) {
   const servers = createServers();
-  registerGenericTools(pi, servers);
+  const registeredToolNames = new Set<string>();
+
+  registerGenericTools(pi, servers, registeredToolNames);
 
   pi.registerCommand("zai-mcp-status", {
     description: "Show configured Z.ai MCP servers and connection status",
     handler: async (_args, ctx) => {
-      const status = serverStatus(servers);
+      const status = serverStatus(servers, registeredToolNames);
       ctx.ui.notify(JSON.stringify(status, null, 2), "info");
     },
   });
-
-  if (!getApiKey()) {
-    console.warn(`[${EXTENSION_NAME}] Z_AI_API_KEY (or ZAI_API_KEY) is not set; Z.ai MCP tools will fail until configured.`);
-    return;
-  }
-
-  for (const server of servers) {
-    try {
-      const tools = await listServerTools(server);
-      for (const tool of tools) registerDiscoveredTool(pi, server, tool);
-      console.warn(`[${EXTENSION_NAME}] registered ${tools.length} tool(s) from ${server.id}.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      server.lastError = message;
-      console.warn(`[${EXTENSION_NAME}] failed to discover ${server.id} tools: ${message}`);
-    }
-  }
 
   pi.on("session_start", async (_event, ctx: ExtensionContext) => {
     const failed = servers.filter((server) => server.lastError);
@@ -445,4 +545,13 @@ export default async function zaiMcpExtension(pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     await closeServers(servers);
   });
+
+  if (!getApiKey()) {
+    console.warn(`[${EXTENSION_NAME}] Z_AI_API_KEY (or ZAI_API_KEY) is not set; Z.ai MCP tools will fail until configured.`);
+    return;
+  }
+
+  if (shouldAutoDiscoverTools()) {
+    void discoverAllServerTools(pi, servers, registeredToolNames);
+  }
 }

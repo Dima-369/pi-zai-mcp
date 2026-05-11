@@ -1,15 +1,42 @@
 {
   "name": "pi-zai-mcp",
   "version": "0.1.0",
-  "private": true,
-  "description": "Pi extension exposing Z.ai MCP server tools (search, reader, zread, vision).",
+  "description": "Unofficial pi package that exposes Z.ai MCP server tools for web search, URL reading, repository reading, and vision workflows.",
   "type": "module",
+  "author": "Mitch Fultz (https://github.com/fitchmultz)",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "extension",
+    "mcp",
+    "z-ai",
+    "zai"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fitchmultz/pi-zai-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fitchmultz/pi-zai-mcp/issues"
+  },
+  "homepage": "https://github.com/fitchmultz/pi-zai-mcp#readme",
+  "files": [
+    "extensions",
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "release:dry-run": "npm run typecheck && npm publish --dry-run"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@z_ai/mcp-server": "0.1.4"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "^0.74.0",
@@ -17,14 +44,14 @@
     "typebox": "^1.1.38",
     "typescript": "^6.0.3"
   },
-  "pi": {
-    "extensions": [
-      "./src/index.ts"
-    ]
-  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/zai-mcp.ts"
+    ]
   }
 }
