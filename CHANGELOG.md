@@ -4,6 +4,9 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+### Fixed
+- Corrected the README compatibility note to the current tested pi baseline `0.79.1` (tracked in `.pi-fleet-tested-version`) instead of the stale `0.78.1`.
+
 ## 0.1.8 - 2026-06-17
 
 ### Changed
