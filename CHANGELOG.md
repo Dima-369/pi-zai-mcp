@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+## 0.1.10 - 2026-06-22
+
+### Changed
+- updated the local pi development baseline to `@earendil-works/*` `0.79.10` and refreshed the npm lockfile
+- refreshed the README compatibility note and removed the obsolete `.pi-fleet-tested-version` marker
+
+### Validation
+- ran `npm run typecheck` and an isolated Pi package-load smoke under pi `0.79.10`
+
 ## 0.1.9 - 2026-06-17
 
 ### Fixed
