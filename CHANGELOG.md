@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+## 0.1.12 - 2026-06-24
+
+### Fixed
+- stopped storing raw MCP responses in pi tool result details after truncating model-visible output, preventing large web/reader/vision payloads from bloating session JSONL
+- refreshed production dependency locks so the MCP SDK resolves to a patched `hono` release and `npm audit --omit=dev` is clean
+- hardened `/zai-mcp-status` output so protocol modes do not write direct status JSON to stdout
+- normalized Pi-style leading `@` on Z.AI vision path arguments before forwarding them to MCP
+
+### Changed
+- updated the README compatibility baseline to pi `0.80.2`
+- added a lightweight smoke script and `npm run ci` validation entrypoint for tool registration, server filtering, status-mode output, missing-key failure, truncation metadata, and vision path normalization
+
+### Validation
+- ran `npm run release:dry-run`
+- ran an isolated Pi RPC package-load and `/zai-mcp-status` smoke with pi `0.80.2`
+- ran a real `z_ai_search` smoke and confirmed raw MCP responses are not stored in tool result details
+
 ## 0.1.11 - 2026-06-23
 
 ### Changed

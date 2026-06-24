@@ -14,6 +14,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Type } from "typebox";
 import { mkdir, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -68,10 +69,11 @@ type VisionAction =
 
 const SEARCH_SCHEMA = Type.Object({
   query: Type.String({
+    minLength: 1,
     description: "Search query. Z.AI recommends keeping it under about 70 characters.",
   }),
   domain_filter: Type.Optional(
-    Type.String({ description: "Optional whitelist domain, for example 'docs.z.ai' or 'github.com'." }),
+    Type.String({ minLength: 1, description: "Optional whitelist domain, for example 'docs.z.ai' or 'github.com'." }),
   ),
   recency_filter: Type.Optional(
     StringEnum(["oneDay", "oneWeek", "oneMonth", "oneYear", "noLimit"] as const, {
@@ -94,8 +96,8 @@ const SEARCH_SCHEMA = Type.Object({
 });
 
 const READER_SCHEMA = Type.Object({
-  url: Type.String({ description: "URL to fetch and convert into model-friendly input." }),
-  timeout: Type.Optional(Type.Integer({ description: "Request timeout in seconds. Z.AI default is 20." })),
+  url: Type.String({ format: "uri", description: "URL to fetch and convert into model-friendly input." }),
+  timeout: Type.Optional(Type.Integer({ minimum: 1, description: "Request timeout in seconds. Z.AI default is 20." })),
   no_cache: Type.Optional(Type.Boolean({ description: "Disable Z.AI reader cache." })),
   return_format: Type.Optional(
     StringEnum(["markdown", "text"] as const, { description: "Return Markdown or plain text.", default: "markdown" }),
@@ -112,13 +114,17 @@ const ZREAD_SCHEMA = Type.Object({
     description:
       "Repository action: search_doc searches docs/issues/commits, read_file reads one file, get_repo_structure lists directories/files.",
   }),
-  repo_name: Type.String({ description: "Public GitHub repository in owner/repo form, for example 'vitejs/vite'." }),
-  query: Type.Optional(Type.String({ description: "Required for search_doc: keywords or question about the repository." })),
+  repo_name: Type.String({
+    minLength: 3,
+    pattern: "^[^/\\s]+/[^/\\s]+$",
+    description: "Public GitHub repository in owner/repo form, for example 'vitejs/vite'.",
+  }),
+  query: Type.Optional(Type.String({ minLength: 1, description: "Required for search_doc: keywords or question about the repository." })),
   language: Type.Optional(
     StringEnum(["en", "zh"] as const, { description: "Optional search_doc response language hint.", default: "en" }),
   ),
-  file_path: Type.Optional(Type.String({ description: "Required for read_file: repository-relative file path." })),
-  dir_path: Type.Optional(Type.String({ description: "Optional for get_repo_structure: directory path; default is repository root." })),
+  file_path: Type.Optional(Type.String({ minLength: 1, description: "Required for read_file: repository-relative file path." })),
+  dir_path: Type.Optional(Type.String({ minLength: 1, description: "Optional for get_repo_structure: directory path; default is repository root." })),
 });
 
 const VISION_SCHEMA = Type.Object({
@@ -140,20 +146,21 @@ const VISION_SCHEMA = Type.Object({
   ),
   image_source: Type.Optional(
     Type.String({
+      minLength: 1,
       description:
         "Local image path or remote image URL. Required for single-image actions except ui_diff_check and analyze_video.",
     }),
   ),
   expected_image_source: Type.Optional(
-    Type.String({ description: "Required for ui_diff_check: expected/reference UI screenshot path or URL." }),
+    Type.String({ minLength: 1, description: "Required for ui_diff_check: expected/reference UI screenshot path or URL." }),
   ),
   actual_image_source: Type.Optional(
-    Type.String({ description: "Required for ui_diff_check: actual/implemented UI screenshot path or URL." }),
+    Type.String({ minLength: 1, description: "Required for ui_diff_check: actual/implemented UI screenshot path or URL." }),
   ),
   video_source: Type.Optional(
-    Type.String({ description: "Required for analyze_video: local path or remote URL to MP4, MOV, or M4V video up to 8 MB." }),
+    Type.String({ minLength: 1, description: "Required for analyze_video: local path or remote URL to MP4, MOV, or M4V video up to 8 MB." }),
   ),
-  prompt: Type.String({ description: "Specific instructions for what to analyze, extract, compare, diagnose, or generate." }),
+  prompt: Type.String({ minLength: 1, description: "Specific instructions for what to analyze, extract, compare, diagnose, or generate." }),
   output_type: Type.Optional(
     StringEnum(["code", "prompt", "spec", "description"] as const, {
       description: "Required for ui_to_artifact: desired artifact type.",
@@ -332,22 +339,26 @@ function summarizeMcpResult(result: unknown): string {
   return parts.length > 0 ? parts.join("\n\n") : JSON.stringify(result, null, 2);
 }
 
-async function truncateForTool(text: string, serverId: string, toolName: string): Promise<{ text: string; truncated: boolean; file?: string }> {
+async function truncateForTool(
+  text: string,
+  serverId: string,
+  toolName: string,
+): Promise<{ content: string; details: { truncated: boolean; file?: string } }> {
   const truncation = truncateHead(text, {
     maxLines: DEFAULT_MAX_LINES,
     maxBytes: DEFAULT_MAX_BYTES,
   });
 
-  if (!truncation.truncated) return { text: truncation.content, truncated: false };
+  if (!truncation.truncated) return { content: truncation.content, details: { truncated: false } };
 
   const dir = join(tmpdir(), EXTENSION_NAME);
   await mkdir(dir, { recursive: true });
-  const safeName = `${Date.now()}-${serverId}-${toolName}`.replace(/[^a-zA-Z0-9_.-]/g, "_");
+  const safeName = `${Date.now()}-${randomUUID()}-${serverId}-${toolName}`.replace(/[^a-zA-Z0-9_.-]/g, "_");
   const file = join(dir, `${safeName}.txt`);
   await writeFile(file, text, "utf8");
 
   const notice = `\n\n[Z.ai MCP output truncated: ${truncation.outputLines} of ${truncation.totalLines} lines (${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}). Full output saved to: ${file}]`;
-  return { text: truncation.content + notice, truncated: true, file };
+  return { content: truncation.content + notice, details: { truncated: true, file } };
 }
 
 async function connect(server: ManagedServer): Promise<Client> {
@@ -505,8 +516,8 @@ async function executeCuratedTool(
   if (isMcpErrorResult(result)) throw new Error(`Z.AI MCP ${server.id}/${toolName} failed:\n${text}`);
   const truncated = await truncateForTool(text, server.id, toolName);
   return {
-    content: [{ type: "text" as const, text: truncated.text }],
-    details: { server: server.id, tool: toolName, result, truncated },
+    content: [{ type: "text" as const, text: truncated.content }],
+    details: { server: server.id, tool: toolName, truncated: truncated.details },
   };
 }
 
@@ -651,11 +662,26 @@ const VISION_ACTION_ARGS = {
   analyze_image: { required: ["image_source"], picks: ["image_source", "prompt"] },
 } as const satisfies Record<VisionAction, ActionArgSpec>;
 
+const VISION_SOURCE_KEYS = ["image_source", "expected_image_source", "actual_image_source", "video_source"] as const;
+
+function normalizePathLikeSource(value: unknown): unknown {
+  return typeof value === "string" && value.startsWith("@") ? value.slice(1) : value;
+}
+
+function normalizeVisionSources(args: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(args).map(([key, value]) => [
+      key,
+      (VISION_SOURCE_KEYS as readonly string[]).includes(key) ? normalizePathLikeSource(value) : value,
+    ]),
+  );
+}
+
 function visionArgs(params: Record<string, unknown>): Record<string, unknown> {
   const action = params.action as VisionAction;
 
   const args = buildArgs(action, params, VISION_ACTION_ARGS);
-  if (args) return args;
+  if (args) return normalizeVisionSources(args);
 
   requireParam(params, "image_source", action);
   throw new Error(`Unsupported vision action '${String(action)}'.`);
@@ -806,8 +832,14 @@ function registerConfiguredTools(pi: ExtensionAPI, servers: ManagedServer[]) {
   }
 }
 
+export const __test = { createServers, serverStatus, truncateForTool, visionArgs };
+
 export default function zaiMcpExtension(pi: ExtensionAPI) {
   const servers = createServers();
+
+  if (servers.length === 0) {
+    console.warn(`[${EXTENSION_NAME}] no Z.AI MCP servers enabled; no tools registered.`);
+  }
 
   registerConfiguredTools(pi, servers);
 
@@ -818,7 +850,7 @@ export default function zaiMcpExtension(pi: ExtensionAPI) {
       if (ctx.hasUI) {
         ctx.ui.notify(status, "info");
       } else {
-        const stream = ctx.mode === "json" ? process.stderr : process.stdout;
+        const stream = ctx.mode === "print" ? process.stdout : process.stderr;
         stream.write(`${status}\n`);
       }
     },

@@ -41,7 +41,7 @@ Install from GitHub:
 pi install https://github.com/fitchmultz/pi-zai-mcp
 ```
 
-Compatibility note: this release is tested against pi `0.80.1`, which is the suggested minimum baseline for this package version. Pi-bundled runtime packages are declared as optional wildcard peers, so npm peer ranges do not hard-block users from trying newer pi releases; runtime behavior is only verified against the tested baseline until a follow-up package release confirms it.
+Compatibility note: this release is tested against pi `0.80.2`, which is the suggested minimum baseline for this package version. Pi-bundled runtime packages are declared as optional wildcard peers, so npm peer ranges do not hard-block users from trying newer pi releases; runtime behavior is only verified against the tested baseline until a follow-up package release confirms it.
 
 Try it without installing permanently:
 
@@ -179,8 +179,7 @@ Large MCP outputs are truncated to pi's standard 50 KB / 2000 line limit. When t
 
 ```bash
 npm install
-npm run typecheck
-npm audit --omit=dev
+npm run ci
 npm publish --dry-run
 ```
 
@@ -196,7 +195,7 @@ pi install -l /path/to/pi-zai-mcp
 
 - Requires a Z.ai API key and network access for real tool calls.
 - The pi-facing API is curated. If upstream MCP schemas or tool names change, update this extension and docs intentionally.
-- Verification currently consists of TypeScript typechecking, npm audit, npm dry-run packing, and pi install smoke checks; there is no dedicated unit test suite yet.
+- Verification currently consists of TypeScript typechecking, a lightweight extension smoke script, npm audit, npm dry-run packing, and pi install smoke checks; there is no broad mocked MCP unit suite yet.
 
 ## Project map
 
