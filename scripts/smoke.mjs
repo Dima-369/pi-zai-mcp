@@ -3,6 +3,11 @@ import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { __test, default as zaiMcpExtension } from "../src/index.ts";
+import zaiMcpReader from "../extensions/zai-mcp-reader.ts";
+import zaiMcpSearch from "../extensions/zai-mcp-search.ts";
+import zaiMcpStatus from "../extensions/zai-mcp-status.ts";
+import zaiMcpVision from "../extensions/zai-mcp-vision.ts";
+import zaiMcpZread from "../extensions/zai-mcp-zread.ts";
 
 const savedEnv = { ...process.env };
 
@@ -22,7 +27,7 @@ function captureWarn(fn) {
   }
 }
 
-function loadExtension(env = {}) {
+function loadExtension(env = {}, extension = zaiMcpExtension) {
   restoreEnv();
   delete process.env.Z_AI_MCP_SERVERS;
   delete process.env.Z_AI_API_KEY;
@@ -37,8 +42,12 @@ function loadExtension(env = {}) {
     registerCommand: (name, command) => commands.set(name, command),
     on: () => undefined,
   };
-  const warnings = captureWarn(() => zaiMcpExtension(pi));
+  const warnings = captureWarn(() => extension(pi));
   return { tools, commands, warnings };
+}
+
+async function loadFreshModule(id) {
+  return import(`../src/index.ts?smoke=${id}-${Date.now()}-${Math.random()}`);
 }
 
 function patchWrite(stream, fn) {
@@ -56,6 +65,16 @@ function patchWrite(stream, fn) {
     });
 }
 
+const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+assert.deepEqual(packageJson.pi.extensions, [
+  "./extensions/zai-mcp-search.ts",
+  "./extensions/zai-mcp-reader.ts",
+  "./extensions/zai-mcp-zread.ts",
+  "./extensions/zai-mcp-vision.ts",
+  "./extensions/zai-mcp-status.ts",
+]);
+
+__test.resetGlobalStateForTests();
 const loaded = loadExtension();
 assert.deepEqual(
   loaded.tools.map((tool) => tool.name),
@@ -66,6 +85,36 @@ assert.ok(loaded.commands.has("zai-mcp-status"));
 const searchOnly = loadExtension({ Z_AI_MCP_SERVERS: "search,unknown" });
 assert.deepEqual(searchOnly.tools.map((tool) => tool.name), ["z_ai_search"]);
 assert.match(searchOnly.warnings.join("\n"), /ignoring unknown Z_AI_MCP_SERVERS/);
+
+const split = [zaiMcpSearch, zaiMcpReader, zaiMcpZread, zaiMcpVision].flatMap((extension) => loadExtension({}, extension).tools.map((tool) => tool.name));
+assert.deepEqual(split, ["z_ai_search", "z_ai_reader", "z_ai_zread", "z_ai_vision"]);
+assert.deepEqual(loadExtension({ Z_AI_MCP_SERVERS: "reader" }, zaiMcpSearch).tools.map((tool) => tool.name), ["z_ai_search"]);
+assert.deepEqual(loadExtension({}, zaiMcpStatus).tools, []);
+
+__test.resetGlobalStateForTests();
+{
+  const tools = [];
+  const commands = new Map();
+  const pi = {
+    registerTool: (tool) => tools.push(tool),
+    registerCommand: (name, command) => commands.set(name, command),
+    on: () => undefined,
+  };
+  for (const server of ["search", "reader", "zread", "vision"]) {
+    const mod = await loadFreshModule(server);
+    mod.registerZaiMcpServers(pi, [server]);
+  }
+  const statusMod = await loadFreshModule("status");
+  statusMod.registerZaiMcpStatusCommand(pi);
+  let notification;
+  await commands.get("zai-mcp-status").handler("", {
+    hasUI: true,
+    mode: "rpc",
+    ui: { notify: (message) => (notification = message) },
+  });
+  assert.deepEqual(JSON.parse(notification).map((server) => server.id), ["search", "reader", "zread", "vision"]);
+}
+__test.resetGlobalStateForTests();
 
 const none = loadExtension({ Z_AI_MCP_SERVERS: "unknown" });
 assert.equal(none.tools.length, 0);
@@ -155,7 +204,9 @@ try {
   await rm(commandAgentDir, { recursive: true, force: true });
 }
 
-const command = loaded.commands.get("zai-mcp-status");
+__test.resetGlobalStateForTests();
+const statusLoaded = loadExtension();
+const command = statusLoaded.commands.get("zai-mcp-status");
 let rpcNotification;
 await command.handler("", {
   hasUI: true,

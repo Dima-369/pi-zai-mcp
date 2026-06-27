@@ -1,6 +1,6 @@
 {
   "name": "pi-zai-mcp",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Unofficial pi package that exposes Z.ai MCP server tools for web search, URL reading, repository reading, and vision workflows.",
   "type": "module",
   "author": "Mitch Fultz (https://github.com/fitchmultz)",
@@ -60,7 +60,11 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/zai-mcp.ts"
+      "./extensions/zai-mcp-search.ts",
+      "./extensions/zai-mcp-reader.ts",
+      "./extensions/zai-mcp-zread.ts",
+      "./extensions/zai-mcp-vision.ts",
+      "./extensions/zai-mcp-status.ts"
     ]
   },
   "packageManager": "npm@11.16.0",

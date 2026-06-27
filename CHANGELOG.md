@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+## 0.1.15 - 2026-06-27
+
+### Changed
+- split the package manifest into per-server extension entrypoints (`zai-mcp-search`, `zai-mcp-reader`, `zai-mcp-zread`, `zai-mcp-vision`) plus a status-command entrypoint so `pi config` can toggle MCP servers independently
+
+### Validation
+- ran `npm run ci`
+- ran focused Pi split-entrypoint status smokes
+
 ## 0.1.14 - 2026-06-26
 
 ### Changed

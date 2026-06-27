@@ -19,36 +19,15 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { createRequire } from "node:module";
+import { addActiveServers, getActiveServers, registerStatusCommand, resetGlobalStateForTests, warnOnceIfMissingApiKey } from "./runtime-state.ts";
+import { ALL_SERVER_IDS, createServers, legacyServerIds, type ManagedServer, type ServerId } from "./servers.ts";
 
 const EXTENSION_NAME = "pi-zai-mcp";
 const require = createRequire(import.meta.url);
 const { version: EXTENSION_VERSION } = require("../package.json") as { version: string };
-const VISION_MCP_PACKAGE = "@z_ai/mcp-server";
-const VISION_MCP_BIN = "zai-mcp-server";
 const DEFAULT_TIMEOUT_MS = positiveIntegerFromEnv("Z_AI_MCP_TIMEOUT_MS", 180_000);
-
-type ServerId = "search" | "reader" | "zread" | "vision";
-type ServerKind = "http" | "stdio";
-
-type ServerConfig = {
-  id: ServerId;
-  label: string;
-  kind: ServerKind;
-  url?: string;
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-};
-
-type ManagedServer = ServerConfig & {
-  client?: Client;
-  transport?: StreamableHTTPClientTransport | StdioClientTransport;
-  connectPromise?: Promise<Client>;
-  callQueue?: Promise<void>;
-  lastError?: string;
-};
 
 type ToolUpdate = {
   content: Array<{ type: "text"; text: string }>;
@@ -297,95 +276,6 @@ function hasApiKeySource(): boolean {
 
 function getApiKey(): string | undefined {
   return process.env.Z_AI_API_KEY || process.env.ZAI_API_KEY || readZaiKeyFromPiAuth();
-}
-
-function enabledServerIds(): Set<ServerId> | undefined {
-  const raw = process.env.Z_AI_MCP_SERVERS;
-  if (!raw || raw.trim().length === 0 || raw.trim().toLowerCase() === "all") return undefined;
-
-  const known = new Set<ServerId>(["search", "reader", "zread", "vision"]);
-  const enabled = new Set<ServerId>();
-  const unknown: string[] = [];
-
-  for (const value of raw.split(",")) {
-    const id = value.trim().toLowerCase();
-    if (!id) continue;
-    if (known.has(id as ServerId)) {
-      enabled.add(id as ServerId);
-    } else {
-      unknown.push(id);
-    }
-  }
-
-  if (unknown.length > 0) {
-    console.warn(`[${EXTENSION_NAME}] ignoring unknown Z_AI_MCP_SERVERS value(s): ${unknown.join(", ")}`);
-  }
-
-  return enabled;
-}
-
-function environment(): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (typeof value === "string") env[key] = value;
-  }
-  return env;
-}
-
-function resolveVisionServerCommand(): { command: string; args: string[] } {
-  const packageJsonPath = require.resolve(`${VISION_MCP_PACKAGE}/package.json`);
-  const packageRoot = dirname(packageJsonPath);
-  const packageJson = require(packageJsonPath) as { bin?: string | Record<string, string> };
-  const binPath = typeof packageJson.bin === "string" ? packageJson.bin : packageJson.bin?.[VISION_MCP_BIN];
-
-  if (!binPath) throw new Error(`${VISION_MCP_PACKAGE} does not declare the ${VISION_MCP_BIN} binary.`);
-
-  return {
-    command: process.execPath,
-    args: [resolve(packageRoot, binPath)],
-  };
-}
-
-function createServers(): ManagedServer[] {
-  const enabled = enabledServerIds();
-  const all: ManagedServer[] = [
-    {
-      id: "search",
-      label: "Z.ai Web Search",
-      kind: "http",
-      url: "https://api.z.ai/api/mcp/web_search_prime/mcp",
-    },
-    {
-      id: "reader",
-      label: "Z.ai Web Reader",
-      kind: "http",
-      url: "https://api.z.ai/api/mcp/web_reader/mcp",
-    },
-    {
-      id: "zread",
-      label: "Z.ai Zread Repository Reader",
-      kind: "http",
-      url: "https://api.z.ai/api/mcp/zread/mcp",
-    },
-  ];
-
-  if (!enabled || enabled.has("vision")) {
-    const visionCommand = resolveVisionServerCommand();
-    all.push({
-      id: "vision",
-      label: "Z.ai Vision",
-      kind: "stdio",
-      command: visionCommand.command,
-      args: visionCommand.args,
-      env: {
-        ...environment(),
-        Z_AI_MODE: process.env.Z_AI_MODE || "ZAI",
-      },
-    });
-  }
-
-  if (!enabled) return all;
-  return all.filter((server) => enabled.has(server.id));
 }
 
 function unwrapJsonString(text: string): string {
@@ -943,29 +833,24 @@ function registerConfiguredTools(pi: ExtensionAPI, servers: ManagedServer[]) {
   }
 }
 
-export const __test = { createServers, getApiKey, hasApiKeySource, searchArgs, serverStatus, truncateForTool, visionArgs };
+function activeServerStatus() {
+  const order = new Map<ServerId, number>(ALL_SERVER_IDS.map((id, index) => [id, index]));
+  return serverStatus(getActiveServers<ManagedServer>().sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0)));
+}
 
-export default function zaiMcpExtension(pi: ExtensionAPI) {
-  const servers = createServers();
+export function registerZaiMcpStatusCommand(pi: ExtensionAPI) {
+  registerStatusCommand(pi, () => JSON.stringify(activeServerStatus(), null, 2));
+}
+
+export function registerZaiMcpServers(pi: ExtensionAPI, serverIds: readonly ServerId[] = ALL_SERVER_IDS) {
+  const servers = createServers(serverIds);
 
   if (servers.length === 0) {
     console.warn(`[${EXTENSION_NAME}] no Z.AI MCP servers enabled; no tools registered.`);
   }
 
+  const removeActiveServers = addActiveServers(servers);
   registerConfiguredTools(pi, servers);
-
-  pi.registerCommand("zai-mcp-status", {
-    description: "Show configured Z.ai MCP servers and connection status",
-    handler: async (_args, ctx) => {
-      const status = JSON.stringify(serverStatus(servers), null, 2);
-      if (ctx.hasUI) {
-        ctx.ui.notify(status, "info");
-      } else {
-        const stream = ctx.mode === "print" ? process.stdout : process.stderr;
-        stream.write(`${status}\n`);
-      }
-    },
-  });
 
   pi.on("session_start", async (_event, ctx: ExtensionContext) => {
     const failed = servers.filter((server) => server.lastError);
@@ -979,13 +864,24 @@ export default function zaiMcpExtension(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async () => {
     await closeServers(servers);
+    removeActiveServers();
   });
 
-  if (!hasApiKeySource()) {
-    console.warn(
-      `[${EXTENSION_NAME}] No Z.ai API key found. Set Z_AI_API_KEY/ZAI_API_KEY, ` +
-        `or run pi /login for the zai provider so ${join(getAgentDir(), "auth.json")} contains a zai API key. ` +
-        `Z.ai MCP tools will fail until configured.`,
-    );
-  }
+  warnOnceIfMissingApiKey(
+    hasApiKeySource,
+    `[${EXTENSION_NAME}] No Z.ai API key found. Set Z_AI_API_KEY/ZAI_API_KEY, ` +
+      `or run pi /login for the zai provider so ${join(getAgentDir(), "auth.json")} contains a zai API key. ` +
+      `Z.ai MCP tools will fail until configured.`,
+  );
+}
+
+export function createZaiMcpExtension(pi: ExtensionAPI) {
+  registerZaiMcpServers(pi, legacyServerIds());
+  registerZaiMcpStatusCommand(pi);
+}
+
+export const __test = { activeServerStatus, createServers, getApiKey, hasApiKeySource, resetGlobalStateForTests, searchArgs, serverStatus, truncateForTool, visionArgs };
+
+export default function zaiMcpExtension(pi: ExtensionAPI) {
+  createZaiMcpExtension(pi);
 }

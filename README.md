@@ -6,7 +6,7 @@ This package focuses on Z.AI MCP servers. GLM-5.2 model access is already covere
 
 ## What you get
 
-`pi-zai-mcp` registers up to four curated pi tools, one per Z.AI MCP server:
+`pi-zai-mcp` registers up to four curated pi tools, one per Z.AI MCP server. Each server has its own package extension file, so `pi config` can enable or disable them independently:
 
 - `z_ai_search` — search the live web with Z.AI Web Search MCP.
 - `z_ai_reader` — read URLs and convert pages to model-friendly Markdown/text with Z.AI Web Reader MCP.
@@ -65,13 +65,15 @@ pi -e .
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `Z_AI_API_KEY` / `ZAI_API_KEY` | Yes* | none | Z.ai API key used for HTTP MCP Bearer auth and the vision stdio server. Env vars take precedence over pi's stored `zai` provider key. |
-| `Z_AI_MCP_SERVERS` | No | `all` | Comma-separated subset of `search,reader,zread,vision`; disabled servers do not register their pi tools. |
+| `Z_AI_MCP_SERVERS` | No | `all` | Optional env-var allowlist for direct/legacy loading. Prefer `pi config` for normal package installs; each server is now a separate extension resource. |
 | `Z_AI_MCP_TIMEOUT_MS` | No | `180000` | Per-connection/tool-call timeout in milliseconds; vision and repository-search actions can take longer than ordinary search/read calls. |
 | `Z_AI_MODE` | No | `ZAI` | Passed through to the vision MCP server; Z.AI docs list `ZAI` as the supported value. |
 
 \* If env vars are unset, the extension falls back to the key pi stores for its built-in `zai` provider in `auth.json` (usually `~/.pi/agent/auth.json`; `PI_CODING_AGENT_DIR` is honored). Run `/login` in pi and choose the ZAI provider to store this key.
 
-Example: disable vision server access for a lighter setup.
+Example: disable vision server access for a lighter setup: run `pi config`, open package resources for `pi-zai-mcp`, and disable `extensions/zai-mcp-vision.ts`.
+
+For one-off shell runs, this legacy env allowlist still works:
 
 ```bash
 export Z_AI_MCP_SERVERS=search,reader,zread
@@ -152,7 +154,7 @@ Arguments:
 Typical flow:
 
 1. Use one of the four curated tools directly: `z_ai_search`, `z_ai_reader`, `z_ai_zread`, or `z_ai_vision`.
-2. If a tool call fails, run `/zai-mcp-status` in interactive pi to inspect server connection status. `connectionStatus: "lazy_not_connected_until_first_use"` is normal before the first call to that server; the pi tool is still registered and available.
+2. If a tool call fails, run `/zai-mcp-status` in interactive pi to inspect enabled server connection status. Keep `extensions/zai-mcp-status.ts` enabled if you want this command. `connectionStatus: "lazy_not_connected_until_first_use"` is normal before the first call to that server; the pi tool is still registered and available.
 3. If Z.AI changes upstream MCP tool names or schemas, update this extension deliberately and run the validation commands below.
 
 Large MCP outputs are truncated to pi's standard 50 KB / 2000 line limit. When truncation happens, the full output is saved to a temp file and the path is included in the tool result.
@@ -161,6 +163,7 @@ Large MCP outputs are truncated to pi's standard 50 KB / 2000 line limit. When t
 
 - `search`, `reader`, and `zread` use Z.ai Streamable HTTP MCP endpoints.
 - `vision` uses the bundled `@z_ai/mcp-server` stdio server dependency through the current Node.js runtime. The extension no longer shells out to `npx` at tool-call time, so installed package behavior stays deterministic and does not depend on package-manager network access after install.
+- The package exposes one extension file per MCP server (`zai-mcp-search.ts`, `zai-mcp-reader.ts`, `zai-mcp-zread.ts`, `zai-mcp-vision.ts`) plus a small status-command extension, so `pi config` can toggle servers independently.
 - The extension registers curated tools synchronously so pi startup is fast and tool context stays small.
 - Tool calls emit an immediate progress update so the TUI shows a Z.AI tool card while MCP connection or long vision/repository work is still running.
 - Tool results use compact TUI rendering by default. Press Ctrl+O to expand a bounded, syntax-highlighted view without dumping very large MCP outputs into the terminal.
@@ -202,8 +205,11 @@ pi install -l /path/to/pi-zai-mcp
 ## Project map
 
 ```text
-extensions/zai-mcp.ts  # public pi package entrypoint
-src/index.ts           # extension implementation
-package.json           # npm + pi package manifest
-CHANGELOG.md           # release notes
+extensions/zai-mcp-*.ts  # per-server pi package entrypoints plus status command
+extensions/zai-mcp.ts    # legacy all-in-one entrypoint for direct local loading
+src/index.ts             # shared extension implementation
+src/runtime-state.ts     # shared state for split entrypoints loaded as separate modules
+src/servers.ts           # canonical MCP server definitions and legacy env allowlist
+package.json             # npm + pi package manifest
+CHANGELOG.md             # release notes
 ```
