@@ -816,7 +816,11 @@ const REGISTRARS = {
     parameters: VISION_SCHEMA,
     renderCall(args, theme) {
       const source = args.video_source ?? args.image_source ?? args.expected_image_source ?? "";
-      return renderToolCall("z_ai_vision", `${args.action} ${source}`, theme);
+      const title = `${theme.fg("toolTitle", theme.bold("z_ai_vision"))} ${theme.fg("accent", compactInline(`${args.action} ${source}`))}`;
+      // ponytail: prompt is the analysis instruction and the most useful call context; surface it on its own line
+      // instead of cramming into the 120-char title summary where a long path/URL would truncate it away.
+      const promptLine = args.prompt ? `\n${theme.fg("toolOutput", compactInline(args.prompt, 200))}` : "";
+      return new Text(`${title}${promptLine}`, 0, 0);
     },
     renderResult(result, options, theme, context) {
       return renderCuratedResult(result, options, theme, context);
