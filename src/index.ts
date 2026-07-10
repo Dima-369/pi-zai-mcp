@@ -704,6 +704,8 @@ const VISION_ACTION_ARGS = {
 } as const satisfies Record<VisionAction, ActionArgSpec>;
 
 const VISION_SOURCE_KEYS = ["image_source", "expected_image_source", "actual_image_source", "video_source"] as const;
+// Action-specific context args (each action sends at most one) that contextualize the prompt.
+const VISION_CONTEXT_KEYS = ["output_type", "programming_language", "context", "diagram_type", "analysis_focus"] as const;
 
 function normalizePathLikeSource(value: unknown): unknown {
   return typeof value === "string" && value.startsWith("@") ? value.slice(1) : value;
@@ -815,12 +817,19 @@ const REGISTRARS = {
     ],
     parameters: VISION_SCHEMA,
     renderCall(args, theme) {
-      const source = args.video_source ?? args.image_source ?? args.expected_image_source ?? "";
-      const title = `${theme.fg("toolTitle", theme.bold("z_ai_vision"))} ${theme.fg("accent", compactInline(`${args.action} ${source}`))}`;
-      // ponytail: prompt is the analysis instruction and the most useful call context; surface it on its own line
-      // instead of cramming into the 120-char title summary where a long path/URL would truncate it away.
+      // ponytail: ui_diff_check sends two images; show both (expected vs actual) instead of only the first via ??,
+      // and surface the action-specific context arg + the prompt on their own lines so a long path/URL can't truncate
+      // them out of the 120-char title summary.
+      const sources = [args.video_source, args.image_source, args.expected_image_source, args.actual_image_source]
+        .filter((value) => typeof value === "string" && value.length > 0)
+        .join(" vs ");
+      const title = `${theme.fg("toolTitle", theme.bold("z_ai_vision"))} ${theme.fg("accent", compactInline(`${args.action} ${sources}`))}`;
+      const contextPairs = (VISION_CONTEXT_KEYS as readonly string[])
+        .filter((key) => args[key] !== undefined && args[key] !== null && args[key] !== "")
+        .map((key) => `${key}=${compactInline(args[key], 80)}`);
+      const contextLine = contextPairs.length > 0 ? `\n${theme.fg("dim", contextPairs.join("  "))}` : "";
       const promptLine = args.prompt ? `\n${theme.fg("toolOutput", compactInline(args.prompt, 200))}` : "";
-      return new Text(`${title}${promptLine}`, 0, 0);
+      return new Text(`${title}${contextLine}${promptLine}`, 0, 0);
     },
     renderResult(result, options, theme, context) {
       return renderCuratedResult(result, options, theme, context);
